@@ -266,47 +266,152 @@ RegisterNetEvent('qb-vehicleshop:server:financePaymentFull', function(data)
 end)
 
 -- Buy public vehicle outright
-RegisterNetEvent('qb-vehicleshop:server:buyShowroomVehicle', function(vehicle)
+RegisterNetEvent('qb-vehicleshop:server:buyShowroomVehicle', function(vehicleData)
     local src = source
-    vehicle = vehicle.buyVehicle
-    local pData = QBCore.Functions.GetPlayer(src)
-    local cid = pData.PlayerData.citizenid
-    local cash = pData.PlayerData.money['cash']
-    local bank = pData.PlayerData.money['bank']
-    local vehiclePrice = QBCore.Shared.Vehicles[vehicle]['price']
-    local plate = GeneratePlate()
-    if cash > tonumber(vehiclePrice) then
+    local player = QBCore.Functions.GetPlayer(src)
+    if not player then return end
+    local playerName = player.PlayerData.charinfo.firstname .. ' ' .. player.PlayerData.charinfo.lastname
+    local vehicle = vehicleData.buyVehicle
+    local cid = player.PlayerData.citizenid
+    local cash = player.PlayerData.money['cash']
+    local bank = player.PlayerData.money['bank']
+    local license = player.PlayerData.license
+    local discordId = QBCore.Functions.GetIdentifier(src, 'discord')
+    
+    local maxBuysPerHour = Config.max_buy_per_hour or 5
+    local checkWindow = Config.buy_check_hours or 1
+
+    local sellCount = MySQL.scalar.await(
+        'SELECT COUNT(*) FROM z_dealer_logs WHERE buyer_name = ? AND `date` >= NOW() - INTERVAL ? HOUR',
+        { playerName, checkWindow }
+    )
+
+    if sellCount >= maxBuysPerHour then
+        TriggerClientEvent('QBCore:Notify', src, 'You have reached the maximum number of purchases in the last ' .. checkWindow .. ' hour(s)', 'error')
+        return
+    end
+
+    local modelCount = MySQL.scalar.await('SELECT COUNT(*) FROM player_vehicles WHERE citizenid = ? AND vehicle = ?', {
+        cid,
+        vehicle
+    })
+
+    if modelCount >= Config.maxduplicated then
+        TriggerClientEvent('QBCore:Notify', src, 'You can only own ' .. Config.maxduplicated .. ' of this vehicle', 'error')
+        return
+    end  
+
+    local vehicleInfo = QBCore.Shared.Vehicles[vehicle]
+    if not vehicleInfo then
+        TriggerClientEvent('QBCore:Notify', src, "Vehicle data not found", "error")
+        return
+    end
+
+    local vehiclePrice = vehicleInfo.price
+    if not vehiclePrice then
+        TriggerClientEvent('QBCore:Notify', src, "Vehicle price not found", "error")
+        return
+    end
+
+    local stock = MySQL.single.await('SELECT stock FROM vehicle_stock WHERE vehicle = ?', { vehicle })
+    if not stock or stock.stock <= 0 then
+        TriggerClientEvent('QBCore:Notify', src, "This vehicle is out of stock", 'error')
+        return
+    end
+
+    local function comma_value(n)
+        local left, num, right = string.match(n, '^([^%d]*%d)(%d*)(.-)$')
+        return left .. (num:reverse():gsub("(%d%d%d)", "%1,"):reverse()) .. right
+    end
+
+    local function logSale(paymentMethod, plate)
+        local vehicleData = QBCore.Shared.Vehicles[vehicle]
+        local playerDiscord = discordId and string.gsub(discordId, "discord:", "") or "Unknown"
+        local logData = {
+            username = '🚗 Vehicle Sales Log',
+            embeds = {{
+                title = '**🚘 Vehicle Sold - Transaction Details**',
+                color = 16760576,
+                description = "**A new vehicle sale has been completed! (Free Use)** 🎉",
+                fields = {
+                    {
+                        name = '👤 **Seller Information**',
+                        value = "free-use seller",
+                        inline = false
+                    },
+                    {
+                        name = '🛒 **Buyer Information**',
+                        value = string.format("**Name:** %s\n**CID:** %s\n**License:** %s\n**Discord:** <@%s>",
+                            playerName, cid, license, playerDiscord),
+                        inline = false
+                    },
+                    {
+                        name = '🚗 **Vehicle Information**',
+                        value = string.format("**Model:** %s\n**Brand:** %s\n**Category:** %s\n**Plate:** %s", 
+                            vehicle, vehicleData.brand or "Unknown", vehicleData.category or "Unknown", plate),
+                        inline = false
+                    },
+                    {
+                        name = '💰 **Price & Payment**',
+                        value = string.format("💵 **Price:** $%s\n💳 **Paid With:** %s", comma_value(vehiclePrice), paymentMethod),
+                        inline = true
+                    },
+                    {
+                        name = '💸 **Commission Earned**',
+                        value = "$0", -- No commission in free-use
+                        inline = true
+                    }
+                },
+                footer = {
+                    text = "🔹 Transaction Date: " .. os.date("%Y-%m-%d %H:%M:%S")
+                },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }}
+        }
+        PerformHttpRequest(Config.Log, function() end, 'POST', json.encode(logData), { ['Content-Type'] = 'application/json' })
+    end
+
+    local function completePurchase(paymentMethod)
+        local plate = GeneratePlate()
+
         MySQL.insert('INSERT INTO player_vehicles (license, citizenid, vehicle, hash, mods, plate, garage, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', {
-            pData.PlayerData.license,
+            license,
             cid,
             vehicle,
             GetHashKey(vehicle),
             '{}',
             plate,
-            'pillboxgarage',
+            Config.DefaultGarage,
             0
         })
-        TriggerClientEvent('QBCore:Notify', src, Lang:t('success.purchased'), 'success')
-        TriggerClientEvent('qb-vehicleshop:client:buyShowroomVehicle', src, vehicle, plate)
-        pData.Functions.RemoveMoney('cash', vehiclePrice, 'vehicle-bought-in-showroom')
-    elseif bank > tonumber(vehiclePrice) then
-        MySQL.insert('INSERT INTO player_vehicles (license, citizenid, vehicle, hash, mods, plate, garage, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', {
-            pData.PlayerData.license,
-            cid,
+
+        MySQL.update('UPDATE vehicle_stock SET stock = stock - 1 WHERE vehicle = ?', { vehicle })
+
+        MySQL.insert('INSERT INTO z_dealer_logs (dealer_name, buyer_name, vehicle, color, payment_method, amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)', {
+            "free-use seller",
+            playerName,
             vehicle,
-            GetHashKey(vehicle),
-            '{}',
             plate,
-            'pillboxgarage',
-            0
+            paymentMethod,
+            vehiclePrice,
+            'success'
         })
+
+        logSale(paymentMethod, plate)
         TriggerClientEvent('QBCore:Notify', src, Lang:t('success.purchased'), 'success')
         TriggerClientEvent('qb-vehicleshop:client:buyShowroomVehicle', src, vehicle, plate)
-        pData.Functions.RemoveMoney('bank', vehiclePrice, 'vehicle-bought-in-showroom')
+        player.Functions.RemoveMoney(paymentMethod, vehiclePrice, 'vehicle-bought-in-showroom')
+    end
+
+    if cash >= vehiclePrice then
+        completePurchase('cash')
+    elseif bank >= vehiclePrice then
+        completePurchase('bank')
     else
         TriggerClientEvent('QBCore:Notify', src, Lang:t('error.notenoughmoney'), 'error')
     end
 end)
+
 
 -- Finance public vehicle
 RegisterNetEvent('qb-vehicleshop:server:financeVehicle', function(downPayment, paymentAmount, vehicle)
@@ -333,7 +438,7 @@ RegisterNetEvent('qb-vehicleshop:server:financeVehicle', function(downPayment, p
             GetHashKey(vehicle),
             '{}',
             plate,
-            'pillboxgarage',
+            Config.DefaultGarage,
             0,
             balance,
             vehPaymentAmount,
@@ -351,7 +456,7 @@ RegisterNetEvent('qb-vehicleshop:server:financeVehicle', function(downPayment, p
             GetHashKey(vehicle),
             '{}',
             plate,
-            'pillboxgarage',
+            Config.DefaultGarage,
             0,
             balance,
             vehPaymentAmount,
@@ -593,7 +698,7 @@ RegisterNetEvent('qb-vehicleshop:server:sellfinanceVehicle', function(downPaymen
                 GetHashKey(vehicle),
                 '{}',
                 plate,
-                'pillboxgarage',
+                Config.DefaultGarage,
                 0,
                 balance,
                 vehPaymentAmount,
@@ -614,7 +719,7 @@ RegisterNetEvent('qb-vehicleshop:server:sellfinanceVehicle', function(downPaymen
                 GetHashKey(vehicle),
                 '{}',
                 plate,
-                'pillboxgarage',
+                Config.DefaultGarage,
                 0,
                 balance,
                 vehPaymentAmount,
