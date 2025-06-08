@@ -1,7 +1,7 @@
 Config = {}
 Config.UsingTarget = GetConvar('UseTarget', 'false') == 'true'
 Config.Commission = 0.10                              -- Percent that goes to sales person from a full car sale 10%
-Config.Percentage = 0.15                              -- Percent that goes to socity person from a full car sale
+Config.Percentage = 1.0                              -- Percent that goes to socity person from a full car sale "here is 100%"
 Config.FinanceCommission = 0.05                       -- Percent that goes to sales person from a finance sale 5%
 Config.PaymentWarning = 10                            -- time in minutes that player has to make payment before repo
 Config.PaymentInterval = 24                           -- time in hours between payment being due
@@ -12,7 +12,7 @@ Config.FilterByMake = false                           -- adds a make list before
 Config.SortAlphabetically = true                      -- will sort make, category, and vehicle selection menus alphabetically
 Config.HideCategorySelectForOne = true                -- will hide the category selection menu if a shop only sells one category of vehicle or a make has only one category
 Config.blocksell = false                              -- allow/prevent players from selling to themselves
-Config.maxduplicated = 2                             -- maximum number of vehicles a player can have of the same vehicle
+Config.maxduplicated = 3                             -- maximum number of vehicles a player can have of the same vehicle
 Config.max_buy_per_hour = 3                             -- maximum number of vehicles a player can buy per day
 Config.buy_check_hours = 24                              -- how many hours to check for max buys
 Config.DefaultGarage = 'pillboxgarage'                 -- default garage for vehicles
@@ -20,18 +20,18 @@ Config.BlacklistedCategories = {
     ["luxury"] = {             -- blacklist these categories only in "targeted" shop
         "class a",
         "class b",
-    }
---[[     ["test"] = {               -- add more categories and shops here
+    },
+    ["test"] = {               -- add more categories and shops here
         "emergency",
         "vans",
-    } ]]
+    }
 }
 
 Config.Log = '' -- Discord webhook for logs
 Config.TestDriveLog = ''
 Config.Shops = {
     ['luxury'] = {
-        ['Type'] = 'managed', -- meaning a real player has to sell the car
+        ['Type'] = 'free-use', -- meaning a real player has to sell the car
         ['Zone'] = {
             ['Shape'] = {
             vector2(-69.166938781738, -1109.6622314453),
@@ -44,8 +44,8 @@ Config.Shops = {
             ['maxZ'] = 28.082290649414,                                            -- max height of the shop zone       
             ['size'] = 2.75    -- size of the vehicles zones
         },
-        ['Job'] = 'cardealer', -- Name of job or none
-        ['ShopLabel'] = 'Reality CarDealer',
+        ['Job'] = 'none', -- Name of job or none
+        ['ShopLabel'] = 'Vehicle Shop',
         ['showBlip'] = true,   -- true or false
         ['blipSprite'] = 734,  -- Blip sprite
         ['blipColor'] = 6,     -- Blip color
